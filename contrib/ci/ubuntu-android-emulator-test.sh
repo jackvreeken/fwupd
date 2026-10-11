@@ -37,7 +37,9 @@ GCOV_ENV="GCOV_PREFIX=/data/local/tmp/gcov GCOV_PREFIX_STRIP=99"
 # must live on-device for servicemanager to read it at boot
 HERE="$(cd "$(dirname "$0")" && pwd)"
 VINTF_FRAGMENT="${HERE}/../android/vintf/org.freedesktop.fwupd.xml"
-VINTF_DEST="/vendor/etc/vintf/manifest/org.freedesktop.fwupd.xml"
+# installed under /system (the framework manifest) because -writable-system makes
+# /system writable, not /vendor; servicemanager reads both manifests
+VINTF_DEST="/system/etc/vintf/manifest/org.freedesktop.fwupd.xml"
 
 if [ ! -d "${DIST}${PREFIX}" ]; then
     echo "error: ${DIST}${PREFIX} not found -- run 'meson install --destdir' first" >&2
@@ -67,25 +69,26 @@ adb root
 wait_boot
 
 # Declare the VINTF-stable fwupd binder service. servicemanager refuses to
-# register or resolve a VINTF-stable instance that is not in the device VINTF
-# manifest ("Could not find org.freedesktop.fwupd.IFwupd/default in the VINTF
-# manifest"), so install the fragment onto the (read-only) vendor image and
-# reboot for servicemanager to pick it up. Skip the work if it is already there.
+# register or resolve a VINTF-stable instance that is not in the VINTF manifest
+# ("Could not find org.freedesktop.fwupd.IFwupd/default in the VINTF manifest"),
+# so install the fragment into the framework manifest on /system and reboot for
+# servicemanager to pick it up. Skip the work if it is already there.
 if ! adb shell "test -f ${VINTF_DEST}" >/dev/null 2>&1; then
     echo "installing VINTF fragment..."
-    # The emulator is started with -writable-system (see linux.yml), but the
-    # first `adb remount` only arms the overlay -- it returns success while
-    # printing "reboot your device", and /vendor stays read-only until a reboot.
-    # So remount, reboot, then remount again before writing.
+    vintf_dir="$(dirname "${VINTF_DEST}")"
+    # Make /system writable. -writable-system (see linux.yml) makes the system
+    # image writable; `adb remount` arms it, but its exit status is unreliable
+    # ("No remountable partitions were found" when already writable), so ignore
+    # it and also force a raw rw remount, then let the push be the real signal.
     adb remount || true
-    adb reboot
-    wait_boot
-    adb root
-    wait_boot
-    adb remount
-    adb shell "mkdir -p $(dirname "${VINTF_DEST}")"
-    adb push "${VINTF_FRAGMENT}" "${VINTF_DEST}"
-    # reboot so servicemanager re-reads the device VINTF manifest at boot
+    adb shell "mount -o remount,rw /system 2>/dev/null || mount -o remount,rw / 2>/dev/null" || true
+    adb shell "mkdir -p ${vintf_dir}"
+    if ! adb push "${VINTF_FRAGMENT}" "${VINTF_DEST}"; then
+        echo "error: could not write ${VINTF_DEST}; mount state:" >&2
+        adb shell "mount | grep -E ' /system | / '" >&2 || true
+        exit 1
+    fi
+    # reboot so servicemanager re-reads the VINTF manifest at boot
     adb reboot
     wait_boot
     adb root
