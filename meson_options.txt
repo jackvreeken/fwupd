@@ -27,6 +27,12 @@ option(
   description: 'build type',
 )
 option(
+  'binder_vintf_stability',
+  type: 'boolean',
+  value: true,
+  description: 'mark the binder service VINTF-stable (requires a VINTF manifest entry on-device; disable for host/emulator testing)',
+)
+option(
   'dbus_socket_address',
   type: 'string',
   value: '',

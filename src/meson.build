@@ -391,6 +391,23 @@ if build_daemon == 'binder'
     native: false,
   )
 
+  # The NDK libbinder_ndk stub does not export the platform binder symbols the
+  # daemon and client call (AServiceManager_addService, ABinderProcess_startThreadPool,
+  # ...); they resolve at runtime against the device's libbinder_ndk, so ignore them
+  # at link time. Required regardless of stability.
+  binder_link_args = ['-Wl,--unresolved-symbols=ignore-in-object-files']
+
+  # The AIDL is generated with vintf stability, but the generated code only marks
+  # the binder VINTF-stable when BINDER_STABILITY_SUPPORT is defined. A VINTF-stable
+  # service must be declared in the on-device VINTF manifest; for host/emulator
+  # testing (where that is not installed) build without it so the service registers
+  # with local stability instead.
+  if get_option('binder_vintf_stability')
+    binder_stability_args = ['-DBINDER_STABILITY_SUPPORT']
+  else
+    binder_stability_args = []
+  endif
+
   aidl_prog = find_program(
     'aidl',
     required: true,
@@ -489,10 +506,9 @@ if build_daemon == 'binder'
     install: true,
     install_rpath: libdir_pkg,
     install_dir: daemon_dir,
-    c_args: ['-DBINDER_STABILITY_SUPPORT'],
-    cpp_args: ['-DBINDER_STABILITY_SUPPORT'],
-    # needed for AIBinder_markVintfStability
-    link_args: ['-Wl,--unresolved-symbols=ignore-in-object-files'],
+    c_args: binder_stability_args,
+    cpp_args: binder_stability_args,
+    link_args: binder_link_args,
   )
 
   fwupdmgr = executable(
@@ -520,13 +536,12 @@ if build_daemon == 'binder'
       fwupdplugin,
       fwupdcli,
     ],
-    c_args: ['-DBINDER_STABILITY_SUPPORT'],
-    cpp_args: ['-DBINDER_STABILITY_SUPPORT'],
+    c_args: binder_stability_args,
+    cpp_args: binder_stability_args,
     link_language: 'cpp',
     install: true,
     install_rpath: libdir_pkg,
-    # needed for AIBinder_markVintfStability
-    link_args: ['-Wl,--unresolved-symbols=ignore-in-object-files'],
+    link_args: binder_link_args,
   )
   if get_option('tests')
     # binder-specific
