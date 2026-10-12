@@ -76,16 +76,23 @@ wait_boot
 if ! adb shell "test -f ${VINTF_DEST}" >/dev/null 2>&1; then
     echo "installing VINTF fragment..."
     vintf_dir="$(dirname "${VINTF_DEST}")"
-    # Make /system writable. -writable-system (see linux.yml) makes the system
-    # image writable; `adb remount` arms it, but its exit status is unreliable
-    # ("No remountable partitions were found" when already writable), so ignore
-    # it and also force a raw rw remount, then let the push be the real signal.
+    # /system is a dm-verity dynamic partition mounted read-only. -writable-system
+    # (see linux.yml) makes the underlying image writable, but verity must also be
+    # disabled (and the device rebooted) before /system can be remounted rw.
+    adb disable-verity || true
+    adb reboot
+    wait_boot
+    adb root
+    wait_boot
+    # now the partition can be remounted; adb remount's exit status is unreliable
+    # ("No remountable partitions were found" when already writable), so ignore it
+    # and also force a raw rw remount, then let the push be the real signal.
     adb remount || true
-    adb shell "mount -o remount,rw /system 2>/dev/null || mount -o remount,rw / 2>/dev/null" || true
+    adb shell "mount -o remount,rw / 2>/dev/null" || true
     adb shell "mkdir -p ${vintf_dir}"
     if ! adb push "${VINTF_FRAGMENT}" "${VINTF_DEST}"; then
         echo "error: could not write ${VINTF_DEST}; mount state:" >&2
-        adb shell "mount | grep -E ' /system | / '" >&2 || true
+        adb shell "mount | grep -E ' / '" >&2 || true
         exit 1
     fi
     # reboot so servicemanager re-reads the VINTF manifest at boot
